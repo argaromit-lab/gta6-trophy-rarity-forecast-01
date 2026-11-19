@@ -1,0 +1,4 @@
+.makefun-kit/
+out/
+node_modules/
+*.log
