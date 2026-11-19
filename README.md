@@ -30,7 +30,7 @@ node main.ts
 2. Forecast the tracked population with a robust power curve whose launch offset is fitted to observed refreshes. Carry three population-growth scenarios into the trophy forecasts.
 3. Fit delayed trophy acquisition to player cohorts. Twenty combinations of Weibull delay and shape explain observed earner growth; fits use nonnegative acquisition probabilities and a complexity prior from trophy descriptions.
 4. Anchor every projection at the latest observed earner count. Mix the competing delay models and population scenarios, then extract ordered quantiles with additional uncertainty for the forecast horizon and sparse growth observations.
-5. While the documented launch refresh is still unseen, conserve both public aggregates: 3,868 players and 4,276 awards. A public Exophase observation of 14,028 players and 14,882 awards supplies rounding intervals for subsequent earner counts. A joint ensemble of synchronization and acquisition-delay assumptions allocates the extra awards across trophies, then reports marginal quantiles. The later observation is not the sealed practice answer.
+5. While the documented launch refresh is still unseen, conserve both public aggregates: 3,868 players and 4,276 awards. A public Exophase observation of 14,028 players and 14,882 awards supplies rounding intervals for subsequent earner counts. A joint ensemble of synchronization and acquisition-delay assumptions allocates the extra awards across trophies. Bounded binomial distributions represent integer acquisitions, and quantiles are projected onto the page's count-to-percentage lattice. The later observation is not the sealed practice answer.
 
 The forecast uses the case's target time, never the machine's clock. Long histories are reduced to 40 distinct states spanning the full history, bounding the cost of cohort fitting. Missing observations, zero earners, and saturated introduction trophies have explicit handling.
 
@@ -44,6 +44,8 @@ KIT_INPUT=/path/to/kit/input node tests/verify.mjs
 The suite checks output shape, finite ordered quantiles, reproducibility, cached-read invariance, time ordering, exclusion of future reads, missing data, zero and full completion, zero horizon, independent file execution, and a dense 55-trophy history. It also evaluates 28 synthetic scenarios with different acquisition delays, player-growth curves, and cohort dilution.
 
 The synthetic benchmark's loss is **0.173356**, versus **0.372161** for the published persistence formula, a **53.42% reduction**. These are synthetic measurements, not an official practice score or evidence of a leaderboard rank. The official scorer and reference answers are withheld from the public kit; `grade-local` reports that this competition is graded on the server only.
+
+The first official submission scored **0.168630**. The aggregate-constrained upgrade scored **0.056491**, a **66.50% reduction**, with **78.18%** coverage and every case valid. The subsequent integer-acquisition revision is evaluated separately; see the validation record for the submission associated with each measurement.
 
 See [VALIDATION.md](VALIDATION.md) for sandbox settings, optimization results, and the comparison limits. No visual artifact is part of this bounty's JSON interface.
 

@@ -110,9 +110,23 @@ function unseenRefresh(c: Case, ss: State[]): number[][] | null {
     const totalWeight = weights.reduce((a, b) => a + b, 0);
     const remaining = Math.max(0, budget - front.reduce((a, b) => a + b, 0));
     seed.forEach((e, i) => {
-      const projected = i === intro ? 3868 : e + front[i] + remaining * weights[i] / Math.max(1e-8, totalWeight);
-      const rate = 100 * projected / 3868;
-      for (const jitter of [-0.5, 0, 0.5]) samples[i].push({ value: printed(rate + jitter * 100 / 3868), weight: jitter === 0 ? 2 : 1 });
+      if (i === intro) return;
+      const meanGain = front[i] + remaining * weights[i] / Math.max(1e-8, totalWeight);
+      const maximum = Math.max(0, Math.floor((launchObservation.rates[i] + 0.004999999) * launchObservation.players / 100) - e);
+      // Awards are integer events. A continuous half-earner jitter invents
+      // impossible rates below the already observed count. Use a count-process
+      // distribution bounded by the later observation's rounding interval.
+      // A binomial, unlike a capped Poisson, preserves the scenario mean.
+      const support = maximum;
+      const p = maximum ? clamp(meanGain / maximum, 0, 1) : 0;
+      let probability = Math.pow(1 - p, maximum);
+      let used = 0;
+      for (let acquired = 0; acquired <= support; acquired++) {
+        const mass = acquired === support ? Math.max(0, 1 - used) : probability;
+        samples[i].push({ value: printed(100 * (e + acquired) / 3868), weight: mass });
+        used += mass;
+        probability *= (maximum - acquired) / (acquired + 1) * p / Math.max(1e-12, 1 - p);
+      }
     });
   }
   return samples.map((draws, i) => i === intro ? [100, 100, 100, 100, 100] : levels.map(p => quantile(draws, p)));

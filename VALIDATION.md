@@ -8,6 +8,10 @@ The first official entry scored **0.168630** practice loss, **0.436364** coverag
 
 The upgrade conserves the public award total as well as the public player total, using later public observations as count intervals. The candidate passed **12 Linux checks, 0 failures**, including the new aggregate-award consistency assertion. Its dense-history workload took **186.2 ms** and the independent practice processes took **229.4 ms**. The synthetic long-horizon benchmark is unchanged, because this upgrade targets the first-refresh prior. Official accuracy must be measured again by the server after submission.
 
+That upgrade was submitted at commit `b19d54a0bc3a0b970fac6088ec307762423e7116`, submission `01a1f45c-e069-7251-9263-bb00c6fc9c71`. Its official practice loss was **0.056491**, coverage **0.781818**, typical miss **0.02 percentage points**, server runtime **576 ms**, and all cases valid. This is a **66.50%** loss reduction from the original submission.
+
+A subsequent candidate replaces continuous half-earner jitter with a bounded binomial acquisition distribution. Its support starts at the initial count and ends at the upper count compatible with the later public observation. Each quantile therefore maps to an integer earner count and the observed page's two-decimal reporting precision. Added assertions check these constraints for every practice trophy. All **12 Docker checks passed**, with dense-history runtime **188.4 ms** and independent-practice runtime **302.9 ms**. Its official score requires a separate submission; it must not be confused with the preceding candidate's 0.056491 result.
+
 ### Original model experiments
 
 The reference generator covers 28 synthetic scenarios: 27 combinations of three acquisition delays, three delay shapes, and three player-growth exponents, plus pure cohort dilution. The comparison baseline is the rules' last-rate forecast with logit spread `0.5 * sqrt(horizon_days)`. Both forecasts are evaluated against the same generated, two-decimal target rates using the published pinball formula.

@@ -144,6 +144,15 @@ if (kitInput) {
       // agree with the public 4,276-award observation within rounding error.
       assert.ok(Math.abs(projectedAwards - 4276) < 20, `${projectedAwards} projected awards`);
       assert.equal(f.trophies.find(t => t.id === 2).q[2], 100);
+      f.trophies.forEach((row, i) => {
+        const seed = Math.round(practice.history[0].rates[i] * 638 / 100);
+        if (i === 1) return;
+        for (const q of row.q) {
+          const e = Math.round(q * 3868 / 100);
+          assert.ok(e >= seed, `trophy ${row.id} predicted fewer than its observed earners`);
+          assert.ok(Math.abs(q - Math.round(e * 10000 / 3868) / 100) < 1e-9, `trophy ${row.id} off count lattice`);
+        }
+      });
       console.log(`${file}: median-implied awards ${projectedAwards.toFixed(1)} vs documented 4276`);
     }
   });
