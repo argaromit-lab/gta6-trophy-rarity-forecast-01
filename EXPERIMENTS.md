@@ -1,5 +1,22 @@
 # Refresh-aware forecast experiments
 
+## Snapshot trajectory and compact launch integration
+
+Coordinate search tuned the local and cohort mixture, the logit adjustment limit, and the interval width and tails directly against the published pinball formula. The search penalized development coverage below 94.7% or above 98%. Every validation fold excluded all windows from one synthetic game during tuning. The separate audit varied the delay family, launch curve, refresh cadence and phase, and included windows in which the target page refreshed and windows in which it stayed cached. Run `npm run tune:trajectory` to reproduce both comparisons.
+
+| Evaluation | Windows | Prior loss | New loss | Prior miss (pp) | New miss (pp) | Prior coverage | New coverage |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Synthetic leave-one-game-out | 288 | 0.122913 | **0.088560** | 1.1927 | 1.2977 | 81.86% | 94.36% |
+| Independent synthetic audit | 216 | 0.112620 | **0.078292** | 1.4056 | 1.3764 | 99.54% | 98.73% |
+| Audit at 90 minutes | 108 | 0.047508 | **0.011214** | 0.2105 | 0.1016 | 100.00% | 99.77% |
+| Audit at 6,510 minutes | 108 | 0.177732 | **0.145369** | 2.6007 | 2.6511 | 99.07% | 97.69% |
+
+The first-refresh model's five-point integration uses 20 joint convolutions instead of 36. Testing outer posterior probabilities from 0.05 to 0.10 selected 0.06 with coverage of 97.94%, 97.82%, and 97.48% across the development, holdout, and audit sets. The 80-window audit loss fell from 0.046827 to 0.046739. Forcing the marginal medians to sum to the launch total increased expected forecast error on the labeled simulations. The deployed model instead uses the award total to condition the joint count distribution.
+
+The kit contains a single game's two unlabeled practice inputs. Both targets correspond to the same first refresh. The current quantiles have a practice loss lower bound of **0.013087**, calculated by scoring each trophy against its own median. Verifying an actual practice loss requires server scoring. The final case has a different horizon and can use the changing snapshots supplied at its cutoff.
+
+## Previous revisions
+
 The public [practice leaderboard](https://make.fun/api/competitions/gta6-trophy-rarity-forecast-01/leaderboard?phase=dev&view=performance) placed `argaromit` 14th at inspection, with exact loss **0.044692**. The top three losses were **0.005976**, **0.012010**, and **0.015731**. The kit contains seven and eight polls for `p00` and `p01`, respectively. Across both cases, each poll has 638 players, 943 awards, and the same 55 rates. The two labels correspond to the same refreshed state. The published aggregates describe the first refresh, but per-trophy target rates are held on the server.
 
 Each rolling fold fits only earlier snapshots. Calibration at a fold's cutoff uses internal hindcasts that end before that cutoff. All models score the same target in each fold using `2 × max(τd, (τ − 1)d)`, with `d = logit(actual) − logit(quantile)` after the scorer's clamp. The cached-target holdout changes launch growth profiles, the refresh phase and cadence, and the trophy-specific publication delay. The submitted-model settings are `week: 'legacy', increments: false, longTail: false, likelihood: 'average', population: 'power'`.

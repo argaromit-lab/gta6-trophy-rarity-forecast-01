@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "node tests/verify.mjs && node tests/count-inference.mjs && node tests/rolling-evaluation.mjs && node tests/reference-scoring.mjs",
-    "grade:reference": "node tools/grade-reference.mjs"
+    "grade:reference": "node tools/grade-reference.mjs",
+    "tune:trajectory": "node tools/tune-trajectory.mjs"
   },
   "engines": { "node": ">=22.18.0" },
   "license": "MIT"

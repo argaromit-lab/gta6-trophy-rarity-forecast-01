@@ -101,6 +101,22 @@ check('short-horizon forecasts preserve already observed growth', () => {
   assert.ok(loss(f, sample.truth) < .5);
 });
 
+check('later story milestones stay below their prerequisites at every quantile', () => {
+  const chain = {
+    ...c,
+    trophies: [
+      { id: 1, name: 'First chapter', description: 'Complete Chapter 1.', tier: 'bronze', points: 15 },
+      { id: 2, name: 'Second chapter', description: 'Complete Chapter 2.', tier: 'bronze', points: 15 },
+    ],
+    history: [2, 4, 7, 12, 22, 35, 49].map((rate, i) => ({
+      slot: iso(12 + i * 6), at: iso(12 + i * 6), players_tracked: 1000, trophies_earned: 500 + 10 * rate, rates: [50, rate],
+    })),
+  };
+  const f = forecast(chain);
+  valid(chain, f);
+  assert.ok(f.trophies[1].q.every((rate, i) => rate <= f.trophies[0].q[i]));
+});
+
 const scenarios = [];
 for (const delay of [15, 40, 100]) for (const shape of [.8, 1.3, 2]) for (const power of [.4, .8, 1.2]) scenarios.push(synthetic({ delay, shape, power }));
 scenarios.push(synthetic({ dilution: true }));

@@ -1,23 +1,38 @@
 {
   "stage": "unsubmitted_candidate",
   "submission_authorized": false,
-  "target_loss": 0.010,
+  "target_loss": 0.003,
   "target_verified": false,
   "candidate_official_loss": null,
   "best_official_submission": "01a1f461-0e7e-7169-b84e-d241088a06e4",
   "best_official_commit": "c85acc823ea0951c776f5d45d995dcb0f2684730",
   "best_official_loss": 0.044692,
-  "leader_official_loss_at_inspection": 0.005976,
-  "practice_rank_at_inspection": 14,
-  "candidate_minimum_possible_practice_loss_for_current_quantiles": 0.013190697552,
-  "synthetic_refresh_development_80_cases": { "previous_loss": 0.046702329013, "candidate_loss": 0.046543855454 },
-  "synthetic_refresh_holdout_80_cases": { "previous_loss": 0.047602250372, "candidate_loss": 0.047484693282 },
-  "synthetic_refresh_audit_80_cases": { "previous_loss": 0.046710199446, "candidate_loss": 0.046827080782 },
-  "synthetic_28_cases": { "previous_loss": 0.159451415456, "candidate_loss": 0.152883456540 },
-  "synthetic_144_cases": { "previous_loss": 0.157730395634, "candidate_loss": 0.141452418992 },
-  "synthetic_72_final_horizon_cases": { "previous_loss": 0.254604059501, "candidate_loss": 0.222450466323 },
-  "synthetic_cached_target_72_quick_folds": { "submitted_loss": 0.060069685776, "prior_loss": 0.060722012953, "candidate_loss": 0.035519213040 },
-  "synthetic_cached_target_72_week_folds": { "submitted_loss": 0.223505787669, "prior_loss": 0.178302468234, "candidate_loss": 0.168592202920 },
-  "finite_count_expectation_12_populations": { "independent_loss": 0.055620066001, "conditioned_loss": 0.043056663098 },
-  "blocking_evidence": "The public kit has one distinct historical state and no per-trophy practice labels. Current practice quantiles also impose a mathematical loss floor above the requested target."
+  "best_official_typical_miss_pp": 0.02,
+  "best_official_coverage_90": 1,
+  "best_official_run_ms": 757,
+  "leader_at_inspection": { "loss": 0.001160, "typical_miss_pp": 0, "coverage_90": 0.981818, "run_ms": 462 },
+  "practice_rank_at_inspection": 17,
+  "candidate_minimum_possible_practice_loss_for_current_quantiles": 0.013086632834,
+  "linux_single_cpu_runtime_ms": {
+    "baseline_commit": "3dea875",
+    "practice_two_cases_previous": 1313.1,
+    "practice_two_cases_candidate": 419.6,
+    "dense_previous": 852.2,
+    "dense_candidate": 286.6,
+    "practice_byte_identical": true
+  },
+  "synthetic_leave_one_game_out": {
+    "game_groups": 36,
+    "cases": 288,
+    "previous": { "loss": 0.122913, "typical_miss_pp": 1.1927, "coverage_90": 0.818576 },
+    "candidate": { "loss": 0.088560, "typical_miss_pp": 1.2977, "coverage_90": 0.943576 }
+  },
+  "synthetic_trajectory_audit": {
+    "game_groups": 36,
+    "cases": 216,
+    "previous": { "loss": 0.112620, "typical_miss_pp": 1.4056, "coverage_90": 0.995370 },
+    "candidate": { "loss": 0.078292, "typical_miss_pp": 1.3764, "coverage_90": 0.987269 }
+  },
+  "synthetic_refresh_audit_80_cases": { "previous_loss": 0.046827080782, "candidate_loss": 0.046739440851, "candidate_coverage_90": 0.974769 },
+  "blocking_evidence": "The kit contains a single game's two practice inputs with one distinct historical state. Official per-trophy references and scoring are server-side."
 }

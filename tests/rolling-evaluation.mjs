@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { forecast } from '../main.ts';
+import { scenario } from './rolling-scenarios.mjs';
 
-const start = Date.parse('2026-11-19T00:00:00Z');
-const iso = h => new Date(start + h * 3600000).toISOString();
 const levels = [.05, .25, .5, .75, .95];
 const normal = [-1.644854, -.67449, 0, .67449, 1.644854];
 const logit = r => Math.log(Math.max(.01, Math.min(99.99, r)) / (100 - Math.max(.01, Math.min(99.99, r))));
 const percent = x => 100 / (1 + Math.exp(-x));
-const rounded = x => Math.round(100 * x) / 100;
 function score(f, truth) {
   return f.trophies.reduce((total, row, i) => total + row.q.reduce((sum, q, j) => {
     const d = logit(truth[i]) - logit(q);
@@ -16,48 +14,12 @@ function score(f, truth) {
   }, 0) / truth.length, 0);
 }
 
-// Separate fixtures from the original 28-case grid: changed delays, changed
-// ages, saturating population growth, a misspecified delay family, and cached
-// recorder reads. Every reference is generated analytically, never taken from
-// a forecast or assigned the scorer's hidden practice labels.
-function scenario({ population, kernel, delay, shape, at, horizon, cadence = 0, phase = 0 }) {
-  const players = t => Math.round(population === 'power' ? 1200 * Math.pow(1 + t / 6, .65) :
-    population === 'waves' ? 1200 + 9200 * -Math.expm1(-t / 16) + 8000 * -Math.expm1(-Math.max(0, t - 28) / 72) :
-    1200 + 14000 * -Math.expm1(-t / 32));
-  const cdf = (age, scale) => age <= 0 ? 0 : kernel === 'weibull' ? -Math.expm1(-Math.pow(age / scale, shape)) : 1 / (1 + Math.pow(scale / age, shape));
-  const trophies = [
-    { id: 1, name: 'Completion', description: 'Attain 100% Completion.', tier: 'gold' },
-    { id: 2, name: 'Story', description: 'Complete Chapter 2.', tier: 'bronze' },
-    { id: 3, name: 'Activity', description: 'Complete an arcade game.', tier: 'bronze' },
-    { id: 4, name: 'Opening', description: 'Complete the introduction.', tier: 'bronze' },
-  ];
-  const seed = [4, 7, 6, players(0)];
-  const share = [.035, .58, .24, 1];
-  const scales = [delay * 4, delay, delay * .5, 0];
-  function rates(t) {
-    return seed.map((e0, i) => {
-      if (i === 3) return 100;
-      const published = Math.max(0, t - (cadence ? [1.5, .75, 0][i] : 0));
-      let e = e0 + (players(0) - e0) * share[i] * cdf(published, scales[i]);
-      for (let hour = 1; hour <= published; hour++) e += (players(hour) - players(hour - 1)) * share[i] * cdf(published - hour + .5, scales[i]);
-      // Count rounding precedes page-percentage rounding.
-      return rounded(100 * Math.round(e) / players(t));
-    });
-  }
-  const asOf = t => Math.max(0, phase + Math.floor((t - phase) / (cadence || 6)) * (cadence || 6));
-  const history = [];
-  for (let slot = 0; slot <= at; slot += 2) {
-    const refresh = asOf(slot);
-    history.push({ slot: iso(slot), at: iso(slot), players_tracked: players(refresh), rates: rates(refresh) });
-  }
-  return {
-    c: { id: 'rolling', at: iso(at), target: iso(at + horizon), horizon_minutes: horizon * 60, game: { release_date: '2026-11-19' }, trophies, history },
-    truth: rates(cadence ? asOf(at + horizon) : at + horizon),
-  };
-}
-
 const groups = new Map();
-const variants = { increments: { longTail: false, week: 'legacy' }, longTail: { increments: false, week: 'legacy' }, combined: { week: 'legacy' }, clock: { week: 'clock' }, calibrated: {}, wide: { hazard: 'wide' }, robust: { hazard: 'robust' }, both: { hazard: 'both' } };
+const variants = {
+  increments: { longTail: false, week: 'legacy' }, longTail: { increments: false, week: 'legacy' },
+  combined: { week: 'legacy' }, clock: { week: 'clock' }, calibrated: { week: 'calibrated' },
+  wide: { week: 'calibrated', hazard: 'wide' }, robust: { week: 'calibrated', hazard: 'robust' }, both: { week: 'calibrated', hazard: 'both' },
+};
 const variantsLoss = Object.fromEntries(Object.keys(variants).map(name => [name, 0]));
 const longLoss = Object.fromEntries(['prior', ...Object.keys(variants)].map(name => [name, 0]));
 let cases = 0, previous = 0, likelihoodOnly = 0, candidate = 0, baseline = 0;

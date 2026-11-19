@@ -2,12 +2,12 @@ import { readdirSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-type Trophy = { id: number; name: string; description: string; tier: string };
-type Read = { slot: string; at: string; players_tracked: number; rates: (number | null)[] };
+type Trophy = { id: number; name: string; description: string; tier: string; points?: number };
+type Read = { slot: string; at: string; players_tracked: number; trophies_earned?: number; rates: (number | null)[] };
 type Case = { id: string; at: string; target: string; horizon_minutes: number; game?: { release_date?: string }; trophies: Trophy[]; history: Read[] };
-type State = { t: number; n: number; r: (number | null)[]; since?: number };
+type State = { t: number; through: number; n: number; r: (number | null)[]; total?: number; since?: number };
 type Sample = { value: number; weight: number };
-export type ForecastOptions = { refresh?: 'independent' | 'conditioned'; bridge?: 'legacy' | 'timing' | 'platform' | 'blend' | 'weak' | 'ensemble'; refreshProfile?: 'uniform' | 'sparse' | 'damped'; lateCounts?: boolean; sharpness?: number; likelihood?: 'average' | 'sum'; population?: 'power' | 'adaptive'; increments?: boolean; longTail?: boolean; week?: 'legacy' | 'clock' | 'calibrated'; hazard?: 'wide' | 'robust' | 'both' };
+export type ForecastOptions = { refresh?: 'independent' | 'conditioned'; bridge?: 'legacy' | 'timing' | 'platform' | 'blend' | 'weak' | 'ensemble'; refreshProfile?: 'uniform' | 'sparse' | 'damped'; lateCounts?: boolean; sharpness?: number; likelihood?: 'average' | 'sum'; population?: 'power' | 'adaptive'; increments?: boolean; longTail?: boolean; week?: 'legacy' | 'clock' | 'calibrated' | 'trajectory'; hazard?: 'wide' | 'robust' | 'both'; trajectory?: Partial<TrajectoryOptions> };
 const levels = [0.05, 0.25, 0.5, 0.75, 0.95];
 const z = [-1.644854, -0.67449, 0, 0.67449, 1.644854];
 const hour = 3600000;
@@ -97,22 +97,100 @@ function binomial(maximum: number, mean: number): number[] {
 
 export type RefreshEvidence = { seed: number[]; lower: number[]; upper: number[]; lateTotal: number; budget: number; ratios: number[]; platform?: number[]; earlyCap?: number[] };
 
+// Forward coefficients and reverse derivatives of the final coefficient give
+// both the normalizer and every conditional marginal in two passes.
+function bridgeMarginals(kernels: number[][][], budget: number, lateOffset: number, marginals: number[][], weight: number): boolean {
+  const stride = budget + 1;
+  const size = stride * (lateOffset + 1);
+  const bounds = (caps: number[], total: number) => {
+    const sums = [0];
+    for (const cap of caps) sums.push(sums.at(-1)! + cap);
+    return sums.map(used => ({ min: Math.max(0, total - (sums.at(-1)! - used)), max: Math.min(total, used) }));
+  };
+  const earlyBounds = bounds(kernels.map(kernel => Math.max(...kernel.map(pmf => pmf.length - 1))), budget);
+  const lateBounds = bounds(kernels.map(kernel => kernel.length - 1), lateOffset);
+  if (earlyBounds[0].min || lateBounds[0].min) return false;
+
+  const unit = new Float64Array(size);
+  unit[0] = 1;
+  const prefix = [unit];
+  for (let i = 0; i < kernels.length; i++) {
+    const after = new Float64Array(size);
+    const before = prefix[i], kernel = kernels[i];
+    const early = earlyBounds[i], late = lateBounds[i];
+    const nextEarly = earlyBounds[i + 1], nextLate = lateBounds[i + 1];
+    for (let l = late.min; l <= late.max; l++) for (let e = early.min; e <= early.max; e++) {
+      const mass = before[l * stride + e];
+      if (mass === 0) continue;
+      const minGain = Math.max(0, nextEarly.min - e);
+      for (let j = Math.max(0, nextLate.min - l); j < kernel.length && l + j <= nextLate.max; j++) {
+        const pmf = kernel[j], base = (l + j) * stride + e;
+        const maxGain = Math.min(pmf.length - 1, nextEarly.max - e);
+        for (let k = minGain; k <= maxGain; k++) after[base + k] += mass * pmf[k];
+      }
+    }
+    prefix.push(after);
+  }
+  const evidence = prefix.at(-1)![size - 1];
+  if (!Number.isFinite(evidence) || evidence < 1e-250) return false;
+
+  let adjoint = new Float64Array(size);
+  let preceding = new Float64Array(size);
+  adjoint[size - 1] = 1;
+  for (let i = kernels.length - 1; i >= 0; i--) {
+    const before = prefix[i], kernel = kernels[i], marginal = marginals[i];
+    const early = earlyBounds[i], late = lateBounds[i];
+    const nextEarly = earlyBounds[i + 1], nextLate = lateBounds[i + 1];
+    const contributions = new Float64Array(marginal.length);
+    preceding.fill(0);
+    for (let l = late.min; l <= late.max; l++) for (let e = early.min; e <= early.max; e++) {
+      const from = l * stride + e, mass = before[from];
+      if (mass === 0) continue;
+      let sum = 0;
+      const minGain = Math.max(0, nextEarly.min - e);
+      for (let j = Math.max(0, nextLate.min - l); j < kernel.length && l + j <= nextLate.max; j++) {
+        const pmf = kernel[j], base = (l + j) * stride + e;
+        const maxGain = Math.min(pmf.length - 1, nextEarly.max - e);
+        for (let k = minGain; k <= maxGain; k++) {
+          const continuation = adjoint[base + k] * pmf[k];
+          contributions[k] += mass * continuation;
+          sum += continuation;
+        }
+      }
+      preceding[from] = sum;
+    }
+    for (let k = 0; k < marginal.length; k++) marginal[k] += weight * contributions[k] / evidence;
+    [adjoint, preceding] = [preceding, adjoint];
+  }
+  return true;
+}
+
 // Each later award can have arrived in the early refresh or in the gap
 // between refreshes. The shared multiplier reconciles the timing odds with
 // the observed early total, while a separate trial models profile imports.
-export function refreshBridge(data: RefreshEvidence, platformWeight = 0, importPrior = [0, 0.25, 0.65], profile: 'uniform' | 'sparse' | 'damped' = 'uniform'): number[][] | null {
+export function refreshBridge(data: RefreshEvidence, platformWeight = 0, importPrior = [0, 0.25, 0.65], profile: 'uniform' | 'sparse' | 'damped' = 'uniform', compact = false): number[][] | null {
   const { seed, lower, upper, lateTotal, budget, ratios, platform, earlyCap } = data;
   const offsets = lower.map((lo, i) => lo - seed[i]);
   const lateOffset = lateTotal - lower.reduce((sum, lo) => sum + lo, 0);
   const ranges = lower.map((lo, i) => upper[i] - lo);
   if (offsets.some(x => x < 0) || ranges.some(x => x < 0 || x > 8) || lateOffset < 0 || lateOffset > 64 || budget < 0 || budget > 256) return null;
-  const size = (budget + 1) * (lateOffset + 1);
-  const stride = budget + 1;
-  const unit = new Float64Array(size); unit[0] = 1;
   const marginals = upper.map((hi, i) => Array<number>(Math.min(budget, hi - seed[i]) + 1).fill(0));
   const expectedLate = offsets.map((x, i) => x + ranges[i] / 2);
-  let modelCount = 0;
-  for (const sync of importPrior) for (const power of [0.8, 1, 1.2]) {
+  // Keep the large-support awards together at the end. Many slow trophies
+  // contribute zero or one award, so their intermediate tables stay narrow.
+  const order = marginals.map((_, i) => i).sort((a, b) =>
+    Math.min(marginals[a].length - 1, earlyCap?.[a] ?? budget) - Math.min(marginals[b].length - 1, earlyCap?.[b] ?? budget));
+  const ordered = order.map(i => marginals[i]);
+  const powers = [0.8, 1, 1.2];
+  // Five nodes preserve the one-dimensional import and delay weights and
+  // remove their linear correlation, using fewer joint convolutions.
+  const nodes = compact && importPrior.length === 3 ? [
+    [importPrior[0], powers[0], 1], [importPrior[0], powers[2], 1],
+    [importPrior[1], powers[1], 2],
+    [importPrior[2], powers[0], 1], [importPrior[2], powers[2], 1],
+  ] : importPrior.flatMap(sync => powers.map(power => [sync, power, 1]));
+  let modelWeight = 0;
+  for (const [sync, power, weight] of nodes) {
     const odds = ratios.map((r, i) => {
       if (r === 0) return 0;
       const prior = Math.pow(clamp(r, 1e-6, 0.999), power);
@@ -140,76 +218,51 @@ export function refreshBridge(data: RefreshEvidence, platformWeight = 0, importP
       return Array.from({ length: Math.min(budget, n, earlyCap?.[i] ?? budget) + 1 }, (_, e) =>
         ((background[e] || 0) * (1 - initial) + (background[e - 1] || 0) * initial) / (ranges[i] + 1));
     }));
-    type CountTable = { masses: Float64Array; maxLate: number; maxEarly: number };
-    const initialTable = { masses: unit, maxLate: 0, maxEarly: 0 };
-    const combine = (table: CountTable, kernel: number[][]): CountTable => {
-      const result = new Float64Array(size);
-      for (let late = 0; late <= table.maxLate; late++) for (let early = 0; early <= table.maxEarly; early++) {
-        const w = table.masses[late * stride + early];
-        if (!w) continue;
-        for (let j = 0; j < kernel.length && late + j <= lateOffset; j++) {
-          const base = (late + j) * stride + early;
-          const pmf = kernel[j];
-          const end = Math.min(budget - early + 1, pmf.length);
-          for (let e = 0; e < end; e++) result[base + e] += w * pmf[e];
-        }
-      }
-      return { masses: result, maxLate: Math.min(lateOffset, table.maxLate + kernel.length - 1),
-        maxEarly: Math.min(budget, table.maxEarly + Math.max(...kernel.map(row => row.length - 1))) };
-    };
-    const prefix = [initialTable];
-    for (const kernel of kernels) prefix.push(combine(prefix.at(-1)!, kernel));
-    const evidence = prefix.at(-1)!.masses[size - 1];
-    if (evidence < 1e-250) continue;
-    let suffix = initialTable;
-    for (let i = kernels.length - 1; i >= 0; i--) {
-      const before = prefix[i];
-      for (let j = 0; j < kernels[i].length && j <= lateOffset; j++) {
-        const pmf = kernels[i][j];
-        for (let e = 0; e < pmf.length; e++) {
-          if (!pmf[e]) continue;
-          let rest = 0;
-          const earlyRemaining = budget - e;
-          const minEarly = Math.max(0, earlyRemaining - suffix.maxEarly);
-          const maxEarly = Math.min(earlyRemaining, before.maxEarly);
-          const minLate = Math.max(0, lateOffset - j - suffix.maxLate);
-          const maxLate = Math.min(lateOffset - j, before.maxLate);
-          for (let l = minLate; l <= maxLate; l++) {
-            const a = l * stride, b = (lateOffset - l - j) * stride + earlyRemaining;
-            for (let k = minEarly; k <= maxEarly; k++) rest += before.masses[a + k] * suffix.masses[b - k];
-          }
-          marginals[i][e] += pmf[e] * rest / evidence;
-        }
-      }
-      suffix = combine(suffix, kernels[i]);
-    }
-    modelCount++;
+    if (bridgeMarginals(order.map(i => kernels[i]), budget, lateOffset, ordered, weight)) modelWeight += weight;
   }
-  return modelCount ? marginals.map(pmf => pmf.map(p => p / modelCount)) : null;
+  return modelWeight ? marginals.map(pmf => pmf.map(p => p / modelWeight)) : null;
 }
 
-export function refreshEnsemble(data: RefreshEvidence, weak: number[][] | null = refreshBridge(data, 0.2)): number[][] | null {
+export function refreshEnsemble(data: RefreshEvidence, weak = refreshBridge(data, 0.2, undefined, 'uniform', true)): number[][] | null {
   if (!weak) return null;
-  const noPlatform = refreshBridge(data);
-  const moreImports = refreshBridge(data, 0, [0.15, 0.45, 0.75]);
-  const fullPlatform = refreshBridge(data, 1);
+  const noPlatform = refreshBridge(data, 0, undefined, 'uniform', true);
+  const moreImports = refreshBridge(data, 0, [0.15, 0.45, 0.75], 'uniform', true);
+  const fullPlatform = refreshBridge(data, 1, undefined, 'uniform', true);
   if (!noPlatform || !moreImports || !fullPlatform) return weak;
   return weak.map((row, i) => row.map((mass, k) => (2 * mass + noPlatform[i][k] + moreImports[i][k] + fullPlatform[i][k]) / 5));
+}
+
+export function launchQuantiles(pmfs: number[][], seed: number[], population: number, tail = 0.06): number[][] {
+  const probabilities = [tail, 0.25, 0.5, 0.75, 1 - tail];
+  return pmfs.map((pmf, i) => {
+    const total = pmf.reduce((sum, mass) => sum + mass, 0);
+    const q: number[] = [];
+    let cumulative = 0;
+    for (let k = 0; k < pmf.length && q.length < probabilities.length; k++) {
+      cumulative += pmf[k];
+      while (q.length < probabilities.length && cumulative >= probabilities[q.length] * total) {
+        q.push(printed(100 * (seed[i] + k) / population));
+      }
+    }
+    return q;
+  });
 }
 
 function states(c: Case): State[] {
   const out: State[] = [];
   let lastPoll: number | undefined;
+  const checkpoint = Date.parse(c.at) / hour;
   const reads = [...c.history].filter(h => Number.isFinite(h.players_tracked) && h.players_tracked > 0)
     .sort((a, b) => Date.parse(a.slot || a.at) - Date.parse(b.slot || b.at));
   for (const h of reads) {
     const t = Date.parse(h.slot || h.at) / hour;
-    if (!Number.isFinite(t) || t > Date.parse(c.at) / hour) continue;
+    if (!Number.isFinite(t) || t > checkpoint) continue;
     const r = c.trophies.map((_, i) => typeof h.rates[i] === 'number' && Number.isFinite(h.rates[i]) ? clamp(h.rates[i]!, 0, 100) : null);
+    const total = Number.isSafeInteger(h.trophies_earned) ? h.trophies_earned : undefined;
     const last = out.at(-1);
-    if (!last || last.n !== h.players_tracked || r.some((v, i) => v !== last.r[i])) {
-      out.push({ t, since: lastPoll, n: h.players_tracked, r });
-    }
+    if (!last || last.n !== h.players_tracked || total !== last.total || r.some((v, i) => v !== last.r[i])) {
+      out.push({ t, through: t, since: lastPoll, n: h.players_tracked, r, total });
+    } else last.through = t;
     lastPoll = t;
   }
   return out;
@@ -282,11 +335,14 @@ function unseenRefresh(c: Case, ss: State[], options: ForecastOptions): number[]
   const bridge = method === 'ensemble' ? refreshEnsemble(monotone) : method === 'legacy' ? null :
     refreshBridge(monotone, method === 'timing' ? 0 : method === 'weak' ? 0.2 : 1, undefined, options.refreshProfile);
   const timing = method === 'blend' ? refreshBridge(monotone) : null;
-  if (bridge) return bridge.map((pmf, i) => {
-    if (i === intro) return levels.map(() => 100);
-    const draws = pmf.map((weight, k) => ({ value: scoreLogit(printed(100 * (seed[i] + k) / 3868)), weight: timing ? (weight + (timing[i][k] || 0)) / 2 : weight }));
-    return forecastQuantiles(draws).map(x => printed(percent(x)));
-  });
+  if (bridge) {
+    const pmfs = timing ? bridge.map((pmf, i) => pmf.map((weight, k) => (weight + (timing[i][k] || 0)) / 2)) : bridge;
+    // Count ordering is the same in rate and logit space. Keep the original
+    // printed boundary values for the grader's percentage-point metrics.
+    const q = launchQuantiles(pmfs, seed, 3868, method === 'ensemble' ? 0.06 : 0.05);
+    if (intro >= 0) q[intro] = levels.map(() => 100);
+    return q;
+  }
   return legacyRefresh(evidence, 3868, intro, options);
 }
 
@@ -441,19 +497,77 @@ function refreshTimes(snapshots: State[], target: number): Sample[] {
   return [0, 0.5, 1].map((stale, i) => ({ value: Math.max(last, target - stale * cadence), weight: i === 1 ? 0.5 : 0.25 }));
 }
 
+function eventTimes(snapshots: State[], target: number): Sample[] {
+  const last = snapshots.at(-1)!;
+  if (target <= last.through) return [{ value: last.t, weight: 1 }];
+  const recent = snapshots.slice(1).slice(-12);
+  const clock = refreshTimes(snapshots, target);
+  if (recent.length < 3) return clock;
+
+  // A timestamp only tells us the first poll to see a refresh. Fit periods
+  // that intersect each consecutive refresh's poll bracket, rather than
+  // mistaking an alternating two/four-hour polling gap for the period.
+  const widths = recent.map(s => s.t - (s.since ?? s.t));
+  let minPeriod = Math.max(0.08, median(widths)), maxPeriod = Infinity;
+  for (let i = 0; i < recent.length; i++) for (let j = i + 1; j < recent.length; j++) {
+    minPeriod = Math.max(minPeriod, ((recent[j].since ?? recent[j].t) - recent[i].t) / (j - i));
+    maxPeriod = Math.min(maxPeriod, (recent[j].t - (recent[i].since ?? recent[i].t)) / (j - i));
+  }
+  const fitted: Sample[] = [];
+  if (minPeriod <= maxPeriod + 1e-8 && target - last.t <= 2 * maxPeriod) {
+    for (const fraction of [0.15, 0.5, 0.85]) {
+      const period = minPeriod + (maxPeriod - minPeriod) * fraction;
+      let lo = last.through - period, hi = last.t;
+      recent.forEach((s, i) => {
+        const offset = (recent.length - 1 - i) * period;
+        lo = Math.max(lo, (s.since ?? s.t) + offset);
+        hi = Math.min(hi, s.t + offset);
+      });
+      if (lo > hi + 1e-8) continue;
+      for (const quantile of [0.15, 0.5, 0.85]) {
+        const phase = lo + (hi - lo) * quantile;
+        const next = phase + Math.floor((target - phase + 1e-8) / period) * period;
+        fitted.push({ value: next > last.through + 1e-8 ? next : last.t, weight: 1 });
+      }
+    }
+  }
+  const timing = fitted.length ? fitted : clock;
+  const total = timing.reduce((sum, x) => sum + x.weight, 0);
+  // Checkpoints can fall close to a delayed, skipped, or unscheduled refresh.
+  // Retain a small late/early update component even with a fitted cadence.
+  if (target - last.t <= 12) return [...timing.map(({ value, weight }) => ({ value, weight: 0.76 * weight / total })),
+    { value: target, weight: 0.12 }, { value: last.t, weight: 0.12 }];
+  return timing;
+}
+
 function cdf(age: number, delay: number, shape: number, longTail = false): number {
   if (age <= 0) return 0;
   const x = Math.pow(age / delay, shape);
   return longTail ? x / (Math.LN2 + x) : -Math.expm1(-x);
 }
 
-function exposure(t: number, cohorts: Cohort[], initial: number, origin: number, delay: number, shape: number, longTail: boolean): number {
-  let total = initial * cdf(t - origin, delay, shape, longTail);
-  for (const c of cohorts) if (c.t < t) total += c.n * cdf(t - c.t, delay, shape, longTail);
-  return total;
+type Exposure = (t: number, cohorts: Cohort[], initial: number, delay: number, shape: number, longTail: boolean) => number;
+function cohortExposure(origin: number): Exposure {
+  // The cohort contribution is shared by all trophies with the same delay
+  // kernel. Only the size of the existing-player cohort differs by trophy.
+  const cache = new Map<Cohort[], Map<string, Map<number, [number, number]>>>();
+  return (t, cohorts, initial, delay, shape, longTail) => {
+    let kernels = cache.get(cohorts);
+    if (!kernels) cache.set(cohorts, kernels = new Map());
+    const key = `${delay}/${shape}/${Number(longTail)}`;
+    let moments = kernels.get(key);
+    if (!moments) kernels.set(key, moments = new Map());
+    let result = moments.get(t);
+    if (!result) {
+      let total = 0;
+      for (const c of cohorts) if (c.t < t) total += c.n * cdf(t - c.t, delay, shape, longTail);
+      moments.set(t, result = [cdf(t - origin, delay, shape, longTail), total]);
+    }
+    return initial * result[0] + result[1];
+  };
 }
 
-function forecastTrophy(c: Case, ss: State[], i: number, populations: Population[], origin: number, options: ForecastOptions, aware = false): number[] {
+function forecastTrophy(c: Case, ss: State[], i: number, populations: Population[], exposure: Exposure, options: ForecastOptions, aware = false): number[] {
   const known = ss.filter(s => s.r[i] !== null);
   if (!known.length) return [0, 0.01, 0.1, 2, 25];
   const last = known.at(-1)!;
@@ -480,8 +594,8 @@ function forecastTrophy(c: Case, ss: State[], i: number, populations: Population
   for (const factor of [0.25, 0.5, 1, 2, 4]) for (const shape of shapes) for (const longTail of kernels) {
     const delay = prior.delay * factor;
     const penalty = 0.15 * Math.pow(Math.log(factor), 2) + 0.10 * Math.pow(shape - prior.shape, 2);
-    const x0 = exposure(first.t, cohorts, initial, origin, delay, shape, longTail);
-    const exposures = observations.map(({ s }) => Math.max(0, exposure(s.t, cohorts, initial, origin, delay, shape, longTail) - x0));
+    const x0 = exposure(first.t, cohorts, initial, delay, shape, longTail);
+    const exposures = observations.map(({ s }) => Math.max(0, exposure(s.t, cohorts, initial, delay, shape, longTail) - x0));
     if (useIncrements) {
       const a = clamp((lastCount - observations[0].e) / Math.max(1e-9, exposures.at(-1)!), 0, 1);
       let cost = 0;
@@ -522,13 +636,13 @@ function forecastTrophy(c: Case, ss: State[], i: number, populations: Population
   for (const model of candidate) {
     const modelWeight = Math.exp(-Math.min(40, (model.cost - best) / 2));
     const amplitude = model.a;
-    const currentX = exposure(last.t, cohorts, initial, origin, model.delay, model.shape, model.longTail);
+    const currentX = exposure(last.t, cohorts, initial, model.delay, model.shape, model.longTail);
     for (const pop of populations) {
       if (aware && pop.at === last.t && last.n === pop.n) {
         draws.push({ value: scoreLogit(r), weight: modelWeight * pop.weight });
         continue;
       }
-      const futureX = exposure(pop.at, pop.cohorts, initial, origin, model.delay, model.shape, model.longTail);
+      const futureX = exposure(pop.at, pop.cohorts, initial, model.delay, model.shape, model.longTail);
       const e = clamp(lastCount + amplitude * Math.max(0, futureX - currentX), 0, pop.n);
       const center = 100 * e / pop.n;
       const centerLogit = logit(center);
@@ -551,7 +665,8 @@ function weekRaw(c: Case, snapshots: State[], origin: number, target: number, op
   const scenarios = [...byTime].flatMap(([at, weight]) => population(ss, origin, at, options)
     .map(p => ({ ...p, weight: p.weight * weight })));
   const cut = { ...c, target: new Date(Math.round(target * hour)).toISOString() };
-  return c.trophies.map((_, i) => forecastTrophy(cut, ss, i, scenarios, origin, options, mode !== 'legacy'));
+  const exposure = cohortExposure(origin);
+  return c.trophies.map((_, i) => forecastTrophy(cut, ss, i, scenarios, exposure, options, mode !== 'legacy'));
 }
 
 function weekForecast(c: Case, snapshots: State[], origin: number, target: number, options: ForecastOptions): number[][] {
@@ -596,6 +711,173 @@ function weekForecast(c: Case, snapshots: State[], origin: number, target: numbe
   });
 }
 
+export type TrajectoryOptions = { short: number; week: number; width: number; tail: number; quickTail: number; radius: number };
+export const trajectoryDefaults: TrajectoryOptions = { short: 1, week: 0.50, width: 1, tail: 1.15, quickTail: 1.5, radius: 0.15 };
+type Trend = { slope: number; bend: number; noise: number };
+type Point = { t: number; x: number; y: number };
+type Trajectory = { local: number[][]; prior: number[][]; horizon: number; reliability: number; chain: number[]; completion: number; platinum: number };
+
+function snapshotCounts(state: State): (number | null)[] {
+  const counts = state.r.map(r => r === null ? null : count(r, state.n));
+  if (state.total === undefined || counts.some(n => n === null)) return counts;
+  const bounds = state.r.map((r, i) => {
+    const estimate = counts[i]!;
+    return [Math.min(estimate, Math.max(0, Math.ceil((r! - 0.005000001) * state.n / 100))),
+      Math.max(estimate, Math.min(state.n, Math.floor((r! + 0.004999999) * state.n / 100)))];
+  });
+  if (state.total < bounds.reduce((sum, [lo]) => sum + lo, 0) || state.total > bounds.reduce((sum, [, hi]) => sum + hi, 0)) return counts;
+  if (counts.reduce<number>((sum, n) => sum + n!, 0) === state.total) return counts;
+  // Within each printed rounding cell, choose count estimates that sum to
+  // the observed award total with the smallest squared change from midpoint.
+  let left = -state.n / 10000 - 1, right = -left;
+  for (let j = 0; j < 24; j++) {
+    const shift = (left + right) / 2;
+    const sum = bounds.reduce((s, [lo, hi], i) => s + clamp(counts[i]! + shift, lo, hi), 0);
+    if (sum < state.total) left = shift; else right = shift;
+  }
+  return bounds.map(([lo, hi], i) => clamp(counts[i]! + (left + right) / 2, lo, hi));
+}
+
+function localTrend(points: Point[], window: number): Trend {
+  const end = points.at(-1)!, previous = points.at(-2);
+  if (!previous) return { slope: 0, bend: 0, noise: 0 };
+  const recent = points.findLast(p => p.t <= end.t - window) ?? points[0];
+  const earlier = points.findLast(p => p.t <= recent.t - window) ?? points[0];
+  const dx = Math.max(1e-6, end.x - recent.x);
+  const recentSlope = (end.y - recent.y) / dx;
+  const earlierSlope = recent.x > earlier.x ? (recent.y - earlier.y) / (recent.x - earlier.x) : recentSlope;
+  const lastSlope = (end.y - previous.y) / Math.max(1e-6, end.x - previous.x);
+  const noise = median(points.filter(p => p.t >= recent.t).map(p => Math.abs(p.y - end.y - recentSlope * (p.x - end.x))));
+  const measurement = Math.abs(end.y - recent.y);
+  const strength = measurement / (measurement + 4 * noise + 1e-4);
+  const bend = 2 * (recentSlope - earlierSlope) / Math.max(0.05, end.x - earlier.x) * strength;
+  const endpoint = recentSlope + clamp(bend * dx / 2, -0.50, 0.50);
+  return { slope: clamp(endpoint + 0.25 * strength * clamp(lastSlope - endpoint, -1.5, 1.5), -12, 12), bend, noise };
+}
+
+function extrapolate(trend: Trend, dx: number, kind: 'players' | 'earners' | 'logit'): number {
+  const velocity = kind === 'logit' ? trend.slope : Math.max(0, trend.slope);
+  if (kind === 'players' && trend.bend < 0) {
+    // Population growth can approach a plateau but cannot turn downward.
+    const decay = clamp(-trend.bend / Math.max(0.2, velocity), 0.02, 9);
+    return velocity * -Math.expm1(-decay * dx) / decay;
+  }
+  const curvature = clamp(trend.bend, -4, kind === 'players' ? 0.4 : 4);
+  const displacement = velocity * dx + 0.35 * curvature * dx * dx / (1 + 2 * dx);
+  return kind === 'logit' ? clamp(displacement, -5, 5) : clamp(displacement, 0, 5);
+}
+
+function trajectoryComponents(c: Case, snapshots: State[], origin: number, target: number, options: ForecastOptions): Trajectory {
+  const last = snapshots.at(-1)!;
+  const horizon = target - Date.parse(c.at) / hour;
+  const prior = weekForecast(c, snapshots, origin, target, { ...options, week: 'calibrated' });
+  const time = (t: number) => Math.log1p(Math.max(0, t - origin) / 6);
+  const recent = snapshots.slice(-12);
+  const cadence = median(recent.slice(1).map((s, j) => s.t - recent[j].t));
+  const window = clamp(Math.max(2 * cadence, (last.t - origin) * 0.20), 2, 18);
+  const sample = snapshots.filter(s => s.t >= last.t - 3 * window);
+  if (sample.length === 1 && snapshots.length > 1) sample.unshift(snapshots.at(-2)!);
+  const rows = sample.map(s => ({ ...s, x: time(s.t), counts: snapshotCounts(s) }));
+  const populationTrend = localTrend(rows.map(({ t, x, n }) => ({ t, x, y: Math.log(n) })), window);
+  const massByTime = new Map<number, number>();
+  for (const { value, weight } of eventTimes(snapshots, target)) {
+    const t = value <= last.through ? last.t : value;
+    massByTime.set(t, (massByTime.get(t) ?? 0) + weight);
+  }
+  const times = [...massByTime].map(([value, weight]) => {
+    const x = time(value);
+    return { value, x, weight, n: last.n * Math.exp(extrapolate(populationTrend, x - time(last.t), 'players')) };
+  });
+
+  const trends = c.trophies.map((t, i) => {
+    const reads = rows.filter(s => s.r[i] !== null);
+    if (!reads.length) return null;
+    const latest = reads.at(-1)!;
+    const counts = reads.map(({ t, x, counts }) => ({ t, x, y: Math.log(0.5 + counts[i]!) }));
+    const logits = reads.map(({ t, x, n, counts }) => ({ t, x, y: Math.log((counts[i]! + 0.5) / (n - counts[i]! + 0.5)) }));
+    const gain = Math.max(0, latest.counts[i]! - reads[0].counts[i]!);
+    const lastRate = latest.r[i]!;
+    const story = /^Complete (Chapter \d+|the final mission)\.?$/i.test(t.description);
+    const group = story ? 'story' : delayPrior(t).delay >= 160 || (t.points ?? 0) >= 90 ? 'late' : 'side';
+    return { latest, gain, lastRate, counts: localTrend(counts, window), logits: localTrend(logits, window),
+      mature: reads.every(s => s.r[i]! >= 99.99), group };
+  });
+  const shrinkage = new Map(['late', 'story', 'side'].map(group => [group, median(trends.flatMap(row =>
+    row && row.group === group && row.gain >= 3 && !row.mature ? [Math.max(0, row.counts.slope)] : []))]));
+  const local = trends.map((row, i) => {
+    if (!row) return prior[i];
+    const { latest, lastRate, mature } = row;
+    if (mature || (lastRate === 0 && row.counts.slope <= 0)) return levels.map(() => lastRate);
+    const earners = latest.counts[i]!;
+    const trend = { ...row.counts };
+    const pool = row.gain > 0 ? 2 / (2 + row.gain) : 0;
+    trend.slope = (1 - pool) * trend.slope + pool * (shrinkage.get(row.group) ?? trend.slope);
+    const draws: Sample[] = [];
+    for (const { n, x, value, weight } of times) {
+      if (value <= latest.t) {
+        draws.push({ value: scoreLogit(lastRate), weight });
+        continue;
+      }
+      const dx = x - latest.x;
+      const e = clamp((earners + 0.5) * Math.exp(extrapolate(trend, dx, 'earners')) - 0.5, earners, n);
+      const countLogit = scoreLogit(100 * e / n);
+      const ratioLogit = scoreLogit(lastRate) + extrapolate(row.logits, dx, 'logit');
+      const directWeight = Math.min(0.70, lastRate / 100);
+      const center = (1 - directWeight) * countLogit + directWeight * ratioLogit;
+      const timeScale = Math.sqrt((value - latest.t) / 24);
+      const spread = 0.015 + timeScale * (0.07 + Math.min(0.4, trend.noise + populationTrend.noise) +
+        Math.min(0.18, 0.12 * Math.abs(countLogit - ratioLogit)) + 0.10 / Math.sqrt(1 + earners));
+      for (let j = 0; j < z.length; j++) draws.push({ value: center + z[j] * spread, weight: weight * [0.10, 0.20, 0.40, 0.20, 0.10][j] });
+    }
+    return forecastQuantiles(draws).map(percent);
+  });
+  const chapters = c.trophies.flatMap((t, i) => {
+    const n = /^Complete Chapter (\d+)\.?$/i.exec(t.description);
+    return n ? [{ i, n: Number(n[1]) }] : [];
+  }).sort((a, b) => a.n - b.n).map(({ i }) => i);
+  const final = c.trophies.findIndex(t => /^Complete the final mission\.?$/i.test(t.description));
+  if (final >= 0) chapters.push(final);
+  return { local, prior, horizon, reliability: Math.min(1, (rows.length - 1) / 4), chain: chapters,
+    completion: c.trophies.findIndex(t => /100% Completion/i.test(t.description)), platinum: c.trophies.findIndex(t => t.tier === 'platinum') };
+}
+
+export function fitTrajectory(c: Case): Trajectory {
+  const ss = states(c);
+  if (!ss.length) throw new Error('Trajectory fitting requires an observed snapshot.');
+  const release = Date.parse(`${c.game?.release_date || c.at.slice(0, 10)}T00:00:00Z`) / hour;
+  return trajectoryComponents(c, ss, Math.min(release, ss[0].t), Math.max(ss.at(-1)!.t, Date.parse(c.target) / hour), {});
+}
+
+export function trajectoryQuantiles(fit: Trajectory, options: TrajectoryOptions): number[][] {
+  const blend = clamp(fit.horizon / 24, 0, 1);
+  const weight = fit.reliability * ((1 - blend) * options.short + blend * options.week);
+  const tail = (1 - blend) * options.quickTail + blend * options.tail;
+  const rows = fit.prior.map((prior, i) => {
+    const local = fit.local[i];
+    if (prior[0] === prior[4] && prior[0] === local[0] && local[0] === local[4]) return [...prior];
+    const priorCenter = scoreLogit(prior[2]);
+    const localCenter = scoreLogit(local[2]);
+    // The local fit is most informative near its anchor. At longer horizons,
+    // guard against large extrapolations from transient launch accelerations.
+    const center = priorCenter + weight * clamp(localCenter - priorCenter, -options.radius, options.radius);
+    return prior.map((rate, j) => {
+      if (j <= 1 && rate === 0 && local[j] <= 0.01) return 0;
+      if (j >= 3 && rate === 100 && local[4] >= 99.99) return 100;
+      const offset = ((scoreLogit(rate) - priorCenter) * (1 - weight) + (scoreLogit(local[j]) - localCenter) * weight) * options.width;
+      return printed(percent(center + offset * (j === 0 || j === 4 ? tail : 1)));
+    });
+  });
+  // Chapter completion is a prerequisite for later chapters. A platinum is
+  // at most as common as any required milestone or the completion trophy.
+  const cap = (i: number, j: number) => { rows[i] = rows[i].map((r, k) => Math.min(r, rows[j][k])); };
+  for (let i = 1; i < fit.chain.length; i++) cap(fit.chain[i], fit.chain[i - 1]);
+  if (fit.platinum >= 0) {
+    for (const i of fit.chain) cap(fit.platinum, i);
+    if (fit.completion >= 0) cap(fit.platinum, fit.completion);
+  }
+  return rows;
+}
+
 export function forecast(c: Case, options: ForecastOptions = {}): { trophies: { id: number; q: number[] }[] } {
   const ss = states(c);
   if (!ss.length) return { trophies: c.trophies.map(t => ({ id: t.id, q: [0, 0.01, 0.1, 2, 25] })) };
@@ -608,7 +890,9 @@ export function forecast(c: Case, options: ForecastOptions = {}): { trophies: { 
   const release = Date.parse(`${c.game?.release_date || String(c.at).slice(0, 10)}T00:00:00Z`) / hour;
   const origin = Math.min(release, ss[0].t);
   const target = Math.max(ss.at(-1)!.t, Date.parse(c.target) / hour);
-  const q = weekForecast(c, ss, origin, target, options);
+  const q = (options.week ?? 'trajectory') === 'trajectory'
+    ? trajectoryQuantiles(trajectoryComponents(c, ss, origin, target, options), { ...trajectoryDefaults, ...options.trajectory })
+    : weekForecast(c, ss, origin, target, options);
   return { trophies: c.trophies.map((t, i) => ({ id: t.id, q: q[i] })) };
 }
 

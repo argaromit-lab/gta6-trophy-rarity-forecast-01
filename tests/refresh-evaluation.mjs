@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { forecast, legacyRefresh, refreshBridge } from '../main.ts';
+import { forecast, launchQuantiles, legacyRefresh, refreshBridge, refreshEnsemble } from '../main.ts';
+import { scoreCase } from '../tools/grade-reference.mjs';
 
 const levels = [.05, .25, .5, .75, .95];
 const population = 3868;
@@ -56,6 +57,7 @@ function simulated(seed, family) {
 }
 
 const summaries = [];
+const integration = {};
 const audit = process.env.REFRESH_HOLDOUT === 'audit';
 for (const family of ['platform', 'timing', 'shift', 'imports']) {
   const sums = { legacy: 0, timing: 0, platform: 0, blend: 0, weakPlatform: 0, moreImports: 0, sparse: 0, damped: 0, joint: 0, weakerPlatform: 0, lowerImport: 0, diversified: 0, paired: 0 };
@@ -71,6 +73,18 @@ for (const family of ['platform', 'timing', 'shift', 'imports']) {
     const lowerImport = refreshBridge(data, .2, [0, .1, .5]);
     const paired = weakPlatform.map((row, j) => row.map((p, k) => (p + sparse[j][k]) / 2));
     const diversified = weakPlatform.map((row, j) => row.map((p, k) => (2 * p + timing[j][k] + moreImports[j][k] + platform[j][k]) / 5));
+    const compact = refreshEnsemble(data);
+    const forecasts = { full: diversified.map((pmf, j) => quantiles(pmf, data.seed[j])) };
+    for (const tail of [.05, .06, .075, .09, .10]) {
+      forecasts[tail] = launchQuantiles(compact, data.seed, population, tail);
+    }
+    for (const [mode, rows] of Object.entries(forecasts)) {
+      const s = scoreCase(rows.map((q, j) => ({ id: j + 1, q })), truth);
+      integration[mode] ??= { loss: 0, miss: 0, coverage: 0 };
+      integration[mode].loss += s.lossSum / s.items / 80;
+      integration[mode].miss += s.missSum / s.trophies / 80;
+      integration[mode].coverage += s.coverage / s.trophies / 80;
+    }
     for (const variant of [timing, platform]) {
       assert.ok(variant);
       let total = 0;
@@ -94,6 +108,7 @@ const mean = Object.fromEntries(Object.keys(summaries[0]).map(key => [key, summa
 assert.ok(mean.weakPlatform < mean.legacy);
 if (!audit) assert.ok(mean.diversified < mean.weakPlatform);
 console.log(JSON.stringify({ mean }));
+console.log(JSON.stringify({ integration }));
 
 if (process.env.KIT_INPUT) {
   const c = JSON.parse(readFileSync(join(process.env.KIT_INPUT, 'p00.in'), 'utf8'));

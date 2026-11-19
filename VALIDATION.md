@@ -1,12 +1,19 @@
 # Validation record
 
-The refresh-aware candidate has a mathematical practice-loss lower bound of **0.013191**. The public kit has no per-trophy practice labels. [EXPERIMENTS.md](EXPERIMENTS.md) reports rolling synthetic losses and [LOCAL_STATUS.json](LOCAL_STATUS.json) tracks the `< 0.010` target.
+The candidate's quantiles imply a practice loss lower bound of **0.013087**. The public kit keeps practice labels on the server. Synthetic scores and the current measurement status are in [EXPERIMENTS.md](EXPERIMENTS.md) and [LOCAL_STATUS.json](LOCAL_STATUS.json).
 
 ## Latest validation
 
-The Node 22.23.5 Linux sandbox passed all four `npm test` suites and the 80-case refresh audit with one CPU, 1,024 MB memory and networking disabled. Two independent runs per practice input produced byte-identical outputs. Total practice runtime averaged **1,054.6 ms** across both cases. A dense 289-read, 55-trophy case took **798.0 ms**, including rolling residual calibration. The current kit matched all 14 file hashes. The kit's `grade-local` command reported that official scoring runs on the server.
+The Node 22.23.5 Linux sandbox passed all four `npm test` suites, trajectory tuning, and the 80-case launch audit with one CPU, 1,024 MB memory, and networking disabled. Two independent runs per practice input produced byte-identical outputs. The mean sum of the two practice runtimes fell from **1,313.1 ms** on `3dea875` to **419.6 ms**. The dense 289-read, 55-trophy case dropped from **852.2 ms** to **286.6 ms**. The kit's `grade-local --kit . --bot /bot --worktree` command reports that the scorer and references are server-side.
 
-At inspection `argaromit` ranked **14th** on the practice board with loss **0.044692** and a server runtime of **757 ms**. The leading three losses were **0.005976**, **0.012010**, and **0.015731**, with runtimes of **491**, **508**, and **428 ms**, respectively. The authenticated quota endpoint reported **0** daily attempts available and a reset at **07:00 WIB on 20 November 2026**.
+| Official practice entry | Loss | Typical miss (pp) | Coverage | `run_ms` |
+| --- | ---: | ---: | ---: | ---: |
+| #1 `lol-fx` | 0.001160 | 0.00 | 98.18% | 462 |
+| #2 `eager-pika-22` | 0.005976 | 0.00 | 98.18% | 491 |
+| #3 `brilliyan-2` | 0.007884 | 0.00 | 100.00% | 520 |
+| #17 `argaromit` (`c85acc8`) | 0.044692 | 0.02 | 100.00% | 757 |
+
+The table records the public practice results at inspection. The candidate's official row is pending. [Practice leaderboard](https://make.fun/api/competitions/gta6-trophy-rarity-forecast-01/leaderboard?phase=dev&view=performance)
 
 ## Earlier validations
 
