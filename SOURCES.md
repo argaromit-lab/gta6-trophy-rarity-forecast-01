@@ -9,4 +9,6 @@ An Exophase rate rounded to two decimals implies a range of integer counts, not 
 
 The exact refresh time of the current page was not available. Fifteen hours after release is an approximate observation age; the delay-power ensemble allows variation in how early awards accumulate. That timing assumption is a source of uncertainty. Public later observations can constrain a historical prior without identifying historical trophy rates uniquely.
 
+The unsubmitted offline candidate additionally conditions the later integer-count intervals on the exact 14,882-award sum and conditions early acquisition distributions on the exact 103-additional-award sum. Its marginal median forecasts imply 4,270.3 awards; marginal medians do not have to sum to the joint total. The source page was checked again without a change in the observed data. A Wayback availability query for 2026-11-19 04:30 UTC returned no archived snapshot. No per-trophy practice answer was obtained.
+
 The observation prior applies only to the documented, still-unseen launch refresh, with matching trophy metadata and a target no more than six hours ahead. The final week's acquisition model fits the history supplied by the grader; this later public snapshot is not injected into final inputs. The sealed reference dataset and rival source code were not accessed.

@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node tests/verify.mjs" },
+  "scripts": {
+    "test": "node tests/verify.mjs && node tests/count-inference.mjs && node tests/rolling-evaluation.mjs && node tests/reference-scoring.mjs",
+    "grade:reference": "node tools/grade-reference.mjs"
+  },
   "engines": { "node": ">=22.18.0" },
   "license": "MIT"
 }

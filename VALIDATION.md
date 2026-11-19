@@ -1,5 +1,7 @@
 # Validation record
 
+The newest source is an **unsubmitted candidate**. [EXPERIMENTS.md](EXPERIMENTS.md) reports its offline comparisons and [LOCAL_STATUS.json](LOCAL_STATUS.json) explicitly records that the requested loss below 0.005 is unverified and not reached by the current quantiles' best-case bound. The official results below belong to the earlier submitted commits, not the unsubmitted candidate.
+
 ## Accuracy experiments
 
 ### Upgrade after the first official submission

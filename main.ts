@@ -7,6 +7,7 @@ type Read = { slot: string; at: string; players_tracked: number; rates: (number 
 type Case = { id: string; at: string; target: string; horizon_minutes: number; game?: { release_date?: string }; trophies: Trophy[]; history: Read[] };
 type State = { t: number; n: number; r: (number | null)[] };
 type Sample = { value: number; weight: number };
+export type ForecastOptions = { refresh?: 'independent' | 'conditioned'; lateCounts?: boolean; sharpness?: number; likelihood?: 'average' | 'sum'; population?: 'power' | 'adaptive' };
 const levels = [0.05, 0.25, 0.5, 0.75, 0.95];
 const z = [-1.644854, -0.67449, 0, 0.67449, 1.644854];
 const hour = 3600000;
@@ -35,6 +36,47 @@ function count(r: number, n: number): number {
   const low = Math.max(0, Math.ceil((r - 0.005000001) * n / 100));
   const high = Math.min(n, Math.floor((r + 0.004999999) * n / 100));
   return high >= low ? clamp(Math.round(r * n / 100), low, high) : r * n / 100;
+}
+
+// Exact marginals of independent finite count distributions, conditional on
+// their sum. Prefix/suffix polynomial products retain all dependencies from
+// the observed total without enumerating the joint state space.
+export function conditionOnTotal(pmfs: number[][], total: number): { marginals: number[][]; evidence: number } | null {
+  if (!Number.isInteger(total) || total < 0 || total > 4096) return null;
+  const combine = (a: Float64Array, p: number[]) => {
+    const b = new Float64Array(total + 1);
+    for (let k = 0; k < p.length && k <= total; k++) if (p[k] > 0) {
+      for (let j = 0; j + k <= total; j++) if (a[j]) b[j + k] += a[j] * p[k];
+    }
+    return b;
+  };
+  const unit = new Float64Array(total + 1); unit[0] = 1;
+  const before = [unit];
+  for (const p of pmfs) before.push(combine(before.at(-1)!, p));
+  const evidence = before.at(-1)![total];
+  if (!Number.isFinite(evidence) || evidence < 1e-280) return null;
+  const after: Float64Array[] = new Array(pmfs.length + 1); after[pmfs.length] = unit;
+  for (let i = pmfs.length - 1; i >= 0; i--) after[i] = combine(after[i + 1], pmfs[i]);
+  const marginals = pmfs.map((p, i) => p.map((mass, k) => {
+    if (!mass || k > total) return 0;
+    let other = 0;
+    for (let j = 0; j + k <= total; j++) other += before[i][j] * after[i + 1][total - k - j];
+    return mass * other / evidence;
+  }));
+  return { marginals, evidence };
+}
+
+function binomial(maximum: number, mean: number): number[] {
+  const p = maximum ? clamp(mean / maximum, 0, 1) : 0;
+  const masses: number[] = [];
+  let probability = Math.pow(1 - p, maximum);
+  let used = 0;
+  for (let k = 0; k <= maximum; k++) {
+    const mass = k === maximum ? Math.max(0, 1 - used) : probability;
+    masses.push(mass); used += mass;
+    probability *= (maximum - k) / (k + 1) * p / Math.max(1e-12, 1 - p);
+  }
+  return masses;
 }
 
 function states(c: Case): State[] {
@@ -79,7 +121,7 @@ const launchObservation = {
 // The kit's competition.yaml records both the population AND the total awards
 // at the first refresh: 3,868 / 4,276. Conserve that aggregate rather than
 // assuming all numerator counts froze while the denominator grew sixfold.
-function unseenRefresh(c: Case, ss: State[]): number[][] | null {
+function unseenRefresh(c: Case, ss: State[], options: ForecastOptions): number[][] | null {
   if (ss.length !== 1 || c.horizon_minutes > 360) return null;
   const last = ss[0];
   const refresh = Date.parse('2026-11-19T04:30:00Z') / hour;
@@ -91,15 +133,17 @@ function unseenRefresh(c: Case, ss: State[]): number[][] | null {
   const nonIntro = seed.reduce((sum, e, i) => sum + (i === intro ? 0 : e), 0);
   const budget = Math.max(0, 4276 - 3868 - nonIntro);
   const samples: Sample[][] = c.trophies.map(() => []);
+  const lower = launchObservation.rates.map(r => Math.ceil((r - 0.005000001) * launchObservation.players / 100));
+  const upper = launchObservation.rates.map(r => Math.floor((r + 0.004999999) * launchObservation.players / 100));
+  const lateMarginals = options.lateCounts !== false ? conditionOnTotal(lower.map((lo, i) => Array.from({ length: upper[i] - lo + 1 }, () => 1 / (upper[i] - lo + 1))), launchObservation.earned - lower.reduce((a, b) => a + b, 0)) : null;
   // Uncertain late integer counts, initial profile synchronization, and delay
   // shapes are mixed jointly; each scenario has exactly the documented budget.
   for (const edge of [0.1, 0.5, 0.9]) for (const sync of [0, 0.5, 1]) for (const delayPower of [0.8, 1, 1.2]) {
     const gains = seed.map((e, i) => {
       if (i === intro) return 0;
-      const r = launchObservation.rates[i];
-      const lo = Math.ceil((r - 0.005000001) * launchObservation.players / 100);
-      const hi = Math.floor((r + 0.004999999) * launchObservation.players / 100);
-      return Math.max(0, lo + edge * (hi - lo) - e);
+      const posterior = lateMarginals?.marginals[i];
+      const current = posterior ? lower[i] + quantile(posterior.map((weight, value) => ({ value, weight })), edge) : lower[i] + edge * (upper[i] - lower[i]);
+      return Math.max(0, current - e);
     });
     const front = gains.map(g => sync * Math.min(1, g));
     const weights = gains.map((g, i) => {
@@ -109,27 +153,32 @@ function unseenRefresh(c: Case, ss: State[]): number[][] | null {
     });
     const totalWeight = weights.reduce((a, b) => a + b, 0);
     const remaining = Math.max(0, budget - front.reduce((a, b) => a + b, 0));
-    seed.forEach((e, i) => {
-      if (i === intro) return;
+    const pmfs = seed.map((e, i) => {
+      if (i === intro) return [1];
       const meanGain = front[i] + remaining * weights[i] / Math.max(1e-8, totalWeight);
-      const maximum = Math.max(0, Math.floor((launchObservation.rates[i] + 0.004999999) * launchObservation.players / 100) - e);
+      const maximum = Math.max(0, upper[i] - e);
       // Awards are integer events. A continuous half-earner jitter invents
       // impossible rates below the already observed count. Use a count-process
       // distribution bounded by the later observation's rounding interval.
       // A binomial, unlike a capped Poisson, preserves the scenario mean.
-      const support = maximum;
-      const p = maximum ? clamp(meanGain / maximum, 0, 1) : 0;
-      let probability = Math.pow(1 - p, maximum);
-      let used = 0;
-      for (let acquired = 0; acquired <= support; acquired++) {
-        const mass = acquired === support ? Math.max(0, 1 - used) : probability;
-        samples[i].push({ value: printed(100 * (e + acquired) / 3868), weight: mass });
-        used += mass;
-        probability *= (maximum - acquired) / (acquired + 1) * p / Math.max(1e-12, 1 - p);
-      }
+      return binomial(maximum, meanGain);
+    });
+    const posterior = options.refresh === 'independent' ? null : conditionOnTotal(pmfs, budget);
+    const distributions = posterior?.marginals || pmfs;
+    distributions.forEach((masses, i) => {
+      if (i === intro) return;
+      masses.forEach((weight, acquired) => {
+        if (weight > 1e-14) samples[i].push({ value: printed(100 * (seed[i] + acquired) / 3868), weight });
+      });
     });
   }
-  return samples.map((draws, i) => i === intro ? [100, 100, 100, 100, 100] : levels.map(p => quantile(draws, p)));
+  return samples.map((draws, i) => {
+    if (i === intro) return [100, 100, 100, 100, 100];
+    const combined = new Map<number, number>();
+    for (const d of draws) combined.set(d.value, (combined.get(d.value) || 0) + d.weight);
+    const masses = [...combined].map(([value, weight]) => ({ value, weight: Math.pow(weight / 27, options.sharpness || 1) }));
+    return levels.map(p => quantile(masses, p));
+  });
 }
 
 function delayPrior(t: Trophy): { delay: number; shape: number; share: number } {
@@ -144,7 +193,7 @@ function delayPrior(t: Trophy): { delay: number; shape: number; share: number } 
 }
 
 type Cohort = { t: number; n: number };
-function population(ss: State[], origin: number, target: number): { n: number; weight: number; cohorts: Cohort[] }[] {
+function population(ss: State[], origin: number, target: number, options: ForecastOptions): { n: number; weight: number; cohorts: Cohort[] }[] {
   const last = ss.at(-1)!;
   const recent = ss.filter(s => s.t >= last.t - 36);
   // Learn the launch offset instead of assuming acquisition began exactly at
@@ -159,6 +208,42 @@ function population(ss: State[], origin: number, target: number): { n: number; w
     const error = points.reduce((sum, p) => sum + Math.pow(p.y - Math.log(last.n) - power * (p.x - anchor), 2), 0);
     if (error < best) { best = error; shift = offset; b = power; }
   }
+  const fitSaturation = (rows: State[]) => {
+    const flows = rows.slice(1).flatMap((s, i) => {
+      const previous = rows[i], dt = s.t - previous.t, dn = s.n - previous.n;
+      return dt > 0 && dn > 0 ? [{ x: (s.t + previous.t) / 2, y: Math.log(dn / dt) }] : [];
+    });
+    if (flows.length < 2) return null;
+    const decay = slope(flows, -1, 1);
+    if (decay >= -1 / 720 || decay < -1 / 4) return null;
+    const tau = -1 / decay, firstTime = rows[0].t;
+    const xs = rows.map(s => Math.exp(-(s.t - firstTime) / tau));
+    const meanX = xs.reduce((a, x) => a + x, 0) / rows.length;
+    const meanY = rows.reduce((a, s) => a + s.n, 0) / rows.length;
+    let xy = 0, xx = 0;
+    rows.forEach((s, i) => { xy += (xs[i] - meanX) * (s.n - meanY); xx += Math.pow(xs[i] - meanX, 2); });
+    const amplitude = -xy / Math.max(1e-12, xx), anchor = rows.at(-1)!;
+    if (amplitude <= 0) return null;
+    return (t: number) => anchor.n + amplitude * (Math.exp(-(anchor.t - firstTime) / tau) - Math.exp(-(t - firstTime) / tau));
+  };
+  let saturating: ((t: number) => number) | null = null;
+  // Accept a launch-population plateau only when an earlier fit predicts
+  // held-out later observations materially better than the power family.
+  // This avoids selecting it just because a flexible curve fits past data.
+  if (options.population !== 'power' && recent.length >= 5) {
+    const split = Math.max(3, Math.floor(recent.length * 0.7));
+    const train = recent.slice(0, split), validation = recent.slice(split);
+    const trial = fitSaturation(train);
+    let powerError = Infinity;
+    const trainLast = train.at(-1)!;
+    for (const offset of [0.25, 1, 2, 4, 8, 16, 32, 64]) {
+      const p = slope(train.map(s => ({ x: Math.log(offset + Math.max(0, s.t - origin)), y: Math.log(s.n) })), 0, 2);
+      const error = validation.reduce((sum, s) => sum + Math.pow(Math.log(trainLast.n * Math.pow((offset + Math.max(0, s.t - origin)) / (offset + Math.max(0, trainLast.t - origin)), p) / s.n), 2), 0);
+      powerError = Math.min(powerError, error);
+    }
+    const saturationError = trial ? validation.reduce((sum, s) => sum + Math.pow(Math.log(Math.max(1, trial(s.t)) / s.n), 2), 0) : Infinity;
+    if (saturationError + 1e-12 < powerError * 0.5) saturating = fitSaturation(recent);
+  }
   return [-0.35, 0, 0.35].map((offset, k) => {
     const power = clamp(b + offset, 0, 2);
     const cohorts: Cohort[] = [];
@@ -170,7 +255,7 @@ function population(ss: State[], origin: number, target: number): { n: number; w
     const steps = Math.max(1, Math.ceil((target - last.t) / 2));
     for (let j = 1; j <= steps; j++) {
       const t = last.t + (target - last.t) * j / steps;
-      const n = last.n * Math.pow((shift + Math.max(0, t - origin)) / (shift + Math.max(0, last.t - origin)), power);
+      const n = saturating ? last.n + Math.max(0, saturating(t) - last.n) * Math.exp(offset) : last.n * Math.pow((shift + Math.max(0, t - origin)) / (shift + Math.max(0, last.t - origin)), power);
       cohorts.push({ t: t - (target - last.t) / steps / 2, n: Math.max(0, n - prev) });
       prev = n;
     }
@@ -188,7 +273,7 @@ function exposure(t: number, cohorts: Cohort[], initial: number, origin: number,
   return total;
 }
 
-function forecastTrophy(c: Case, ss: State[], i: number, populations: ReturnType<typeof population>, origin: number): number[] {
+function forecastTrophy(c: Case, ss: State[], i: number, populations: ReturnType<typeof population>, origin: number, options: ForecastOptions): number[] {
   const known = ss.filter(s => s.r[i] !== null);
   if (!known.length) return [0, 0.01, 0.1, 2, 25];
   const last = known.at(-1)!;
@@ -223,7 +308,9 @@ function forecastTrophy(c: Case, ss: State[], i: number, populations: ReturnType
       const x = Math.max(0, exposure(s.t, cohorts, initial, origin, delay, shape) - x0);
       cost += Math.pow((seed + a * x - e) / Math.sqrt(Math.max(2, e)), 2);
     }
-    cost /= Math.max(1, known.length - 1);
+    // Distinct refreshes are separate evidence. Averaging their likelihood
+    // residuals would prevent additional observations from resolving delays.
+    if (options.likelihood === 'average') cost /= Math.max(1, known.length - 1);
     cost += 0.15 * Math.pow(Math.log(factor), 2) + 0.10 * Math.pow(shape - prior.shape, 2);
     candidate.push({ delay, shape, a, cost });
   }
@@ -250,16 +337,16 @@ function forecastTrophy(c: Case, ss: State[], i: number, populations: ReturnType
   return q.map(x => Number(clamp(x, 0, 100).toFixed(6)));
 }
 
-export function forecast(c: Case): { trophies: { id: number; q: number[] }[] } {
+export function forecast(c: Case, options: ForecastOptions = {}): { trophies: { id: number; q: number[] }[] } {
   const ss = states(c);
   if (!ss.length) return { trophies: c.trophies.map(t => ({ id: t.id, q: [0, 0.01, 0.1, 2, 25] })) };
-  const refresh = unseenRefresh(c, ss);
+  const refresh = unseenRefresh(c, ss, options);
   if (refresh) return { trophies: c.trophies.map((t, i) => ({ id: t.id, q: refresh[i] })) };
   const release = Date.parse(`${c.game?.release_date || String(c.at).slice(0, 10)}T00:00:00Z`) / hour;
   const origin = Math.min(release, ss[0].t);
   const target = Math.max(ss.at(-1)!.t, Date.parse(c.target) / hour);
-  const populations = population(ss, origin, target);
-  return { trophies: c.trophies.map((t, i) => ({ id: t.id, q: forecastTrophy(c, ss, i, populations, origin) })) };
+  const populations = population(ss, origin, target, options);
+  return { trophies: c.trophies.map((t, i) => ({ id: t.id, q: forecastTrophy(c, ss, i, populations, origin, options) })) };
 }
 
 function main() {

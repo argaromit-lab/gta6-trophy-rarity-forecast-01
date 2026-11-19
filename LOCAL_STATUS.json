@@ -1,0 +1,16 @@
+{
+  "stage": "unsubmitted_candidate",
+  "submission_authorized": false,
+  "target_loss": 0.005,
+  "target_verified": false,
+  "candidate_official_loss": null,
+  "best_official_submission": "01a1f461-0e7e-7169-b84e-d241088a06e4",
+  "best_official_commit": "c85acc823ea0951c776f5d45d995dcb0f2684730",
+  "best_official_loss": 0.044692,
+  "leader_official_loss_at_inspection": 0.005976,
+  "candidate_minimum_possible_practice_loss_for_current_quantiles": 0.014028623834,
+  "synthetic_28_cases": { "previous_loss": 0.173356232991, "candidate_loss": 0.159451415456 },
+  "synthetic_144_cases": { "previous_loss": 0.167468924873, "candidate_loss": 0.157730395634 },
+  "finite_count_expectation_12_populations": { "independent_loss": 0.055620066001, "conditioned_loss": 0.043056663098 },
+  "blocking_evidence": "No independent per-trophy practice reference is available. Current quantile widths also impose a mathematical loss floor above the requested target. Synthetic scores and public aggregate totals cannot verify a loss below 0.005."
+}
