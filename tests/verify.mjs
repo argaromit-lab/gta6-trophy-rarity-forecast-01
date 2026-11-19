@@ -67,9 +67,9 @@ const c = synthetic().c;
 check('JSON contract and deterministic forecast', () => {
   const f = forecast(c); valid(c, f); assert.deepEqual(f, forecast(structuredClone(c)));
 });
-check('unchanged cached reads do not add statistical evidence', () => {
+check('duplicate reads within one polling slot do not add evidence', () => {
   const extra = structuredClone(c);
-  extra.history = extra.history.flatMap(h => [h, { ...h, slot: new Date(Date.parse(h.slot) + 60000).toISOString() }]);
+  extra.history = extra.history.flatMap(h => [h, { ...h, at: new Date(Date.parse(h.at) + 60000).toISOString() }]);
   assert.deepEqual(forecast(c), forecast(extra));
 });
 check('history sorting and future-read exclusion', () => {

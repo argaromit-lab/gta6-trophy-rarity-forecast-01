@@ -1,6 +1,22 @@
 # Validation record
 
-The newest source is an **unsubmitted candidate**. [EXPERIMENTS.md](EXPERIMENTS.md) reports its offline comparisons and [LOCAL_STATUS.json](LOCAL_STATUS.json) explicitly records that the requested loss below 0.005 is unverified and not reached by the current quantiles' best-case bound. The official results below belong to the earlier submitted commits, not the unsubmitted candidate.
+The refresh-aware candidate has a mathematical practice-loss lower bound of **0.013191**. The public kit has no per-trophy practice labels. [EXPERIMENTS.md](EXPERIMENTS.md) reports rolling synthetic losses and [LOCAL_STATUS.json](LOCAL_STATUS.json) tracks the `< 0.010` target.
+
+## Latest validation
+
+The Node 22.23.5 Linux sandbox passed all four `npm test` suites and the 80-case refresh audit with one CPU, 1,024 MB memory and networking disabled. Two independent runs per practice input produced byte-identical outputs. Total practice runtime averaged **1,054.6 ms** across both cases. A dense 289-read, 55-trophy case took **798.0 ms**, including rolling residual calibration. The current kit matched all 14 file hashes. The kit's `grade-local` command reported that official scoring runs on the server.
+
+At inspection `argaromit` ranked **14th** on the practice board with loss **0.044692** and a server runtime of **757 ms**. The leading three losses were **0.005976**, **0.012010**, and **0.015731**, with runtimes of **491**, **508**, and **428 ms**, respectively. The authenticated quota endpoint reported **0** daily attempts available and a reset at **07:00 WIB on 20 November 2026**.
+
+## Earlier validations
+
+With the launch-refresh ensemble and the recorder's published rate bounds, the full Node 22 sandbox suite passed. The two official practice cases averaged **1,120.5 ms** in total. The dense 55-trophy scenario took **178.2 ms**.
+
+The joint launch-refresh model passed the full suite and the 80-case launch-refresh holdout in the same constrained Linux sandbox. The dense forecast took **155.4 ms** and independent practice execution averaged **954.4 ms** across the two cases. The launch-refresh model costs more CPU than its predecessor. Runtime remains within the 8-second per-case budget.
+
+All four suites passed in the offline Linux Node 22 sandbox with one CPU and 1,024 MB memory. The contract suite passed 12 checks and the count suite passed five checks. The rolling comparison and reference scorer also passed. The 55-trophy dense workload took **209.3 ms**, and the two independent practice cases averaged **326.9 ms** in total. The recovered official kit matched all 14 file hashes in its manifest.
+
+On the latest practice leaderboard inspection, `argaromit` was **12th** with loss **0.044692** and runtime **757 ms**. The top three losses were **0.005976**, **0.012010**, and **0.015731**, with runtimes of **491**, **508**, and **428 ms**. The local candidate has no official grade.
 
 ## Accuracy experiments
 
