@@ -14,7 +14,7 @@ A subsequent candidate replaces continuous half-earner jitter with a bounded bin
 
 The integer candidate was submitted at commit `c85acc823ea0951c776f5d45d995dcb0f2684730`, submission `01a1f461-0e7e-7169-b84e-d241088a06e4`. Its official practice loss is **0.044692**, coverage **1.000000**, typical miss **0.02 percentage points**, runtime **757 ms**, and every case valid. It is the best of this account's three submitted candidates and reduces loss **73.50%** from the original. The API reports stage `scored`, no failed checks, and `Force_Last` with no override, so this latest submission is the one that counts.
 
-The quota after that submission is **3 of 3** used for 19 November UTC, with **17 of 20** total attempts left. The next daily reset is **2026-11-20T00:00:00Z**. At the final leaderboard inspection the displayed top ten ranged from **0.00598** to **0.0502**. The new 0.044692 loss is below that displayed top-ten cutoff, but the public standings had not yet included this entry, so an official rank was not claimed.
+The quota after that submission is **3 of 3** used for 19 November UTC, with **17 of 20** total attempts left. The next daily reset is **2026-11-20T00:00:00Z**. The explicit `phase=dev&view=performance` leaderboard subsequently confirmed **rank 8** for this submission under `argaromit`. Rank 1 had loss **0.00598** and rank 10 **0.0500** at that inspection. These are live, unofficial practice standings and can change as further submissions are graded.
 
 ### Original model experiments
 
