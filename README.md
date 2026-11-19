@@ -45,7 +45,7 @@ The suite checks output shape, finite ordered quantiles, reproducibility, cached
 
 The synthetic benchmark's loss is **0.173356**, versus **0.372161** for the published persistence formula, a **53.42% reduction**. These are synthetic measurements, not an official practice score or evidence of a leaderboard rank. The official scorer and reference answers are withheld from the public kit; `grade-local` reports that this competition is graded on the server only.
 
-The first official submission scored **0.168630**. The aggregate-constrained upgrade scored **0.056491**, a **66.50% reduction**, with **78.18%** coverage and every case valid. The subsequent integer-acquisition revision is evaluated separately; see the validation record for the submission associated with each measurement.
+Official practice losses improved from **0.168630** to **0.056491** to **0.044692**. The final integer-acquisition revision reduced loss **73.50%** from the first submission, with **100%** coverage, every case valid, and **757 ms** server runtime. The submitted code is commit `c85acc823ea0951c776f5d45d995dcb0f2684730`; subsequent documentation commits record the result. These are practice measurements; the final week's target remains a future observation.
 
 See [VALIDATION.md](VALIDATION.md) for sandbox settings, optimization results, and the comparison limits. No visual artifact is part of this bounty's JSON interface.
 
