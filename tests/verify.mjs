@@ -139,6 +139,12 @@ if (kitInput) {
       const f = forecast(practice); valid(practice, f); assert.deepEqual(f, forecast(practice));
       const platinum = f.trophies.find(t => t.id === 1);
       assert.ok(platinum.q[2] < practice.history.at(-1).rates[0]);
+      const projectedAwards = f.trophies.reduce((sum, t) => sum + t.q[2] * 3868 / 100, 0);
+      // Marginal medians and display rounding need not sum exactly, but must
+      // agree with the public 4,276-award observation within rounding error.
+      assert.ok(Math.abs(projectedAwards - 4276) < 20, `${projectedAwards} projected awards`);
+      assert.equal(f.trophies.find(t => t.id === 2).q[2], 100);
+      console.log(`${file}: median-implied awards ${projectedAwards.toFixed(1)} vs documented 4276`);
     }
   });
   check('official practice files run independently through the real entrypoint', () => {

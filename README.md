@@ -30,7 +30,7 @@ node main.ts
 2. Forecast the tracked population with a robust power curve whose launch offset is fitted to observed refreshes. Carry three population-growth scenarios into the trophy forecasts.
 3. Fit delayed trophy acquisition to player cohorts. Twenty combinations of Weibull delay and shape explain observed earner growth; fits use nonnegative acquisition probabilities and a complexity prior from trophy descriptions.
 4. Anchor every projection at the latest observed earner count. Mix the competing delay models and population scenarios, then extract ordered quantiles with additional uncertainty for the forecast horizon and sparse growth observations.
-5. While the documented launch refresh is still unseen, use the public rules' population change from 638 to 3,868 as a narrowly scoped refresh prior. Trophy counts are reconstructed from the input percentages; this branch contains no per-trophy answer list.
+5. While the documented launch refresh is still unseen, conserve both public aggregates: 3,868 players and 4,276 awards. A public Exophase observation of 14,028 players and 14,882 awards supplies rounding intervals for subsequent earner counts. A joint ensemble of synchronization and acquisition-delay assumptions allocates the extra awards across trophies, then reports marginal quantiles. The later observation is not the sealed practice answer.
 
 The forecast uses the case's target time, never the machine's clock. Long histories are reduced to 40 distinct states spanning the full history, bounding the cost of cohort fitting. Missing observations, zero earners, and saturated introduction trophies have explicit handling.
 
@@ -51,7 +51,7 @@ See [VALIDATION.md](VALIDATION.md) for sandbox settings, optimization results, a
 
 - [Bounty and scoring rules](https://make.fun/bounty/gta6-trophy-rarity-forecast-01).
 - The official kit's `RULES.txt`, `competition.yaml`, `input/NOTICE.txt`, and practice cases.
-- [Exophase's public trophy page](https://www.exophase.com/game/grand-theft-auto-vi-psn/trophies/) was inspected as background. Its current trophy percentages are not embedded as forecast answers.
+- [Exophase's public trophy page](https://www.exophase.com/game/grand-theft-auto-vi-psn/trophies/), inspected on 19 November 2026, supplied the later observation used to constrain the first-refresh prior. [SOURCES.md](SOURCES.md) records its role and limitations.
 
 Two practice cases spanning one early refresh cannot establish forecast calibration over the final 6,510-minute horizon. Population extrapolation, cohort acquisition, and Exophase's refresh schedule remain uncertain. The test grid is an analytical check, not real-world training data.
 

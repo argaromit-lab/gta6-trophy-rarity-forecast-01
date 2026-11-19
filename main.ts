@@ -64,22 +64,58 @@ function slope(xs: { x: number; y: number }[], lo: number, hi: number): number {
   return slopes.length ? clamp(median(slopes), lo, hi) : 0;
 }
 
-// Public rules describe the launch refresh. This is an explicit observation
-// prior, not a table of trophy answers, and is used only while refresh is unseen.
+// Public observations inspected 2026-11-19: the current page has 14,028
+// tracked players and 14,882 awards. These are later observations, not the
+// sealed practice answers. Their rounding intervals constrain an early prior.
+const launchObservation = {
+  players: 14028, earned: 14882, ageHours: 15,
+  rates: [0.03, 99.99, 0.73, 0.14, 0.06, 0.06, 0.06, 0.24, 0.06, 0.06, 0.06,
+    0.06, 0.06, 0.03, 0.03, 0.04, 0.04, 0.03, 0.04, 1.89, 0.41, 0.04,
+    0.04, 0.04, 0.03, 0.03, 0.04, 0.03, 0.04, 0.03, 0.03, 0.03, 0.09,
+    0.05, 0.24, 0.06, 0.14, 0.14, 0.06, 0.04, 0.04, 0.04, 0.04, 0.08,
+    0.04, 0.09, 0.04, 0.05, 0.04, 0.11, 0.06, 0.04, 0.05, 0.04, 0.04],
+};
+
+// The kit's competition.yaml records both the population AND the total awards
+// at the first refresh: 3,868 / 4,276. Conserve that aggregate rather than
+// assuming all numerator counts froze while the denominator grew sixfold.
 function unseenRefresh(c: Case, ss: State[]): number[][] | null {
   if (ss.length !== 1 || c.horizon_minutes > 360) return null;
   const last = ss[0];
   const refresh = Date.parse('2026-11-19T04:30:00Z') / hour;
   const target = Date.parse(c.target) / hour;
   if (last.n !== 638 || last.t >= refresh || target < refresh) return null;
-  return c.trophies.map((_, i) => {
-    const r = last.r[i] ?? 0;
-    if (r >= 99.99) return [99.98, 99.99, 100, 100, 100];
-    const e = count(r, last.n);
-    const m = 100 * e / 3868;
-    const s = 0.05;
-    return z.map(v => printed(percent(logit(m) + v * s)));
-  });
+  if (c.trophies.length !== launchObservation.rates.length || c.trophies[0].name !== 'Vice Got a Price!') return null;
+  const seed = c.trophies.map((_, i) => count(last.r[i] ?? 0, last.n));
+  const intro = seed.findIndex(e => e >= last.n - 1);
+  const nonIntro = seed.reduce((sum, e, i) => sum + (i === intro ? 0 : e), 0);
+  const budget = Math.max(0, 4276 - 3868 - nonIntro);
+  const samples: Sample[][] = c.trophies.map(() => []);
+  // Uncertain late integer counts, initial profile synchronization, and delay
+  // shapes are mixed jointly; each scenario has exactly the documented budget.
+  for (const edge of [0.1, 0.5, 0.9]) for (const sync of [0, 0.5, 1]) for (const delayPower of [0.8, 1, 1.2]) {
+    const gains = seed.map((e, i) => {
+      if (i === intro) return 0;
+      const r = launchObservation.rates[i];
+      const lo = Math.ceil((r - 0.005000001) * launchObservation.players / 100);
+      const hi = Math.floor((r + 0.004999999) * launchObservation.players / 100);
+      return Math.max(0, lo + edge * (hi - lo) - e);
+    });
+    const front = gains.map(g => sync * Math.min(1, g));
+    const weights = gains.map((g, i) => {
+      const p = delayPrior(c.trophies[i]);
+      const ratio = cdf(4.5, p.delay, p.shape) / Math.max(1e-8, cdf(launchObservation.ageHours, p.delay, p.shape));
+      return Math.max(0, g - front[i]) * Math.pow(ratio, delayPower);
+    });
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    const remaining = Math.max(0, budget - front.reduce((a, b) => a + b, 0));
+    seed.forEach((e, i) => {
+      const projected = i === intro ? 3868 : e + front[i] + remaining * weights[i] / Math.max(1e-8, totalWeight);
+      const rate = 100 * projected / 3868;
+      for (const jitter of [-0.5, 0, 0.5]) samples[i].push({ value: printed(rate + jitter * 100 / 3868), weight: jitter === 0 ? 2 : 1 });
+    });
+  }
+  return samples.map((draws, i) => i === intro ? [100, 100, 100, 100, 100] : levels.map(p => quantile(draws, p)));
 }
 
 function delayPrior(t: Trophy): { delay: number; shape: number; share: number } {

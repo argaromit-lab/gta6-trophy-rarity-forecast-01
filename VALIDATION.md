@@ -2,6 +2,14 @@
 
 ## Accuracy experiments
 
+### Upgrade after the first official submission
+
+The first official entry scored **0.168630** practice loss, **0.436364** coverage, all cases valid, and **607 ms** server runtime. Both cases had the same loss. That evidence exposed an overly confident frozen-numerator assumption in the launch-refresh branch.
+
+The upgrade conserves the public award total as well as the public player total, using later public observations as count intervals. The candidate passed **12 Linux checks, 0 failures**, including the new aggregate-award consistency assertion. Its dense-history workload took **186.2 ms** and the independent practice processes took **229.4 ms**. The synthetic long-horizon benchmark is unchanged, because this upgrade targets the first-refresh prior. Official accuracy must be measured again by the server after submission.
+
+### Original model experiments
+
 The reference generator covers 28 synthetic scenarios: 27 combinations of three acquisition delays, three delay shapes, and three player-growth exponents, plus pure cohort dilution. The comparison baseline is the rules' last-rate forecast with logit spread `0.5 * sqrt(horizon_days)`. Both forecasts are evaluated against the same generated, two-decimal target rates using the published pinball formula.
 
 | Experiment | Synthetic mean pinball loss | Decision |
